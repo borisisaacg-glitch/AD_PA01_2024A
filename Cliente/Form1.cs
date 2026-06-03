@@ -3,7 +3,7 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 using System.Net.Sockets;
-using Protocolo;
+using Protocolo; // Importa Pedido, Respuesta y la nueva clase Protocolo
 
 namespace Cliente
 {
@@ -21,20 +21,18 @@ namespace Cliente
         {
             try
             {
+                // Establece la conexión TCP con el servidor al iniciar el formulario
                 remoto = new TcpClient("127.0.0.1", 8080);
                 flujo = remoto.GetStream();
             }
             catch (SocketException ex)
             {
-                MessageBox.Show("No se puedo establecer conexión " + ex.Message,
-                    "ERROR");
+                MessageBox.Show("No se pudo establecer conexión: " + ex.Message, "ERROR");
             }
-            finally 
-            {
-                flujo?.Close();
-                remoto?.Close();
-            }
+            // Nota: se eliminó el finally que cerraba flujo/remoto al arrancar,
+            // ese era el bug principal — cerraba la conexión recién abierta
 
+            // Deshabilitar panel de placa hasta que el usuario inicie sesión
             panPlaca.Enabled = false;
             chkLunes.Enabled = false;
             chkMartes.Enabled = false;
@@ -49,20 +47,22 @@ namespace Cliente
         {
             string usuario = txtUsuario.Text;
             string contraseña = txtPassword.Text;
+
             if (usuario == "" || contraseña == "")
             {
-                MessageBox.Show("Se requiere el ingreso de usuario y contraseña",
-                    "ADVERTENCIA");
+                MessageBox.Show("Se requiere el ingreso de usuario y contraseña", "ADVERTENCIA");
                 return;
             }
 
+            // Construir pedido de inicio de sesión
             Pedido pedido = new Pedido
             {
                 Comando = "INGRESO",
                 Parametros = new[] { usuario, contraseña }
             };
-            
-            Respuesta respuesta = HazOperacion(pedido);
+
+            // Delegar el envío a la clase Protocolo
+            Respuesta respuesta = Protocolo.Protocolo.HazOperacion(pedido, flujo);
             if (respuesta == null)
             {
                 MessageBox.Show("Hubo un error", "ERROR");
@@ -80,51 +80,9 @@ namespace Cliente
             {
                 panPlaca.Enabled = false;
                 panLogin.Enabled = true;
-                MessageBox.Show("No se pudo ingresar, revise credenciales",
-                    "ERROR");
+                MessageBox.Show("No se pudo ingresar, revise credenciales", "ERROR");
                 txtUsuario.Focus();
             }
-        }
-
-        private Respuesta HazOperacion(Pedido pedido)
-        {
-            if(flujo == null)
-            {
-                MessageBox.Show("No hay conexión", "ERROR");
-                return null;
-            }
-            try
-            {
-                byte[] bufferTx = Encoding.UTF8.GetBytes(
-                    pedido.Comando + " " + string.Join(" ", pedido.Parametros));
-                
-                flujo.Write(bufferTx, 0, bufferTx.Length);
-
-                byte[] bufferRx = new byte[1024];
-                
-                int bytesRx = flujo.Read(bufferRx, 0, bufferRx.Length);
-                
-                string mensaje = Encoding.UTF8.GetString(bufferRx, 0, bytesRx);
-                
-                var partes = mensaje.Split(' ');
-                
-                return new Respuesta
-                {
-                    Estado = partes[0],
-                    Mensaje = string.Join(" ", partes.Skip(1).ToArray())
-                };
-            }
-            catch (SocketException ex)
-            {
-                MessageBox.Show("Error al intentar transmitir " + ex.Message,
-                    "ERROR");
-            }
-            finally 
-            {
-                flujo?.Close();
-                remoto?.Close();
-            }
-            return null;
         }
 
         private void btnConsultar_Click(object sender, EventArgs e)
@@ -132,14 +90,15 @@ namespace Cliente
             string modelo = txtModelo.Text;
             string marca = txtMarca.Text;
             string placa = txtPlaca.Text;
-            
+
+            // Construir pedido de cálculo de restricción vehicular
             Pedido pedido = new Pedido
             {
                 Comando = "CALCULO",
                 Parametros = new[] { modelo, marca, placa }
             };
-            
-            Respuesta respuesta = HazOperacion(pedido);
+
+            Respuesta respuesta = Protocolo.Protocolo.HazOperacion(pedido, flujo);
             if (respuesta == null)
             {
                 MessageBox.Show("Hubo un error", "ERROR");
@@ -149,77 +108,43 @@ namespace Cliente
             if (respuesta.Estado == "NOK")
             {
                 MessageBox.Show("Error en la solicitud.", "ERROR");
-                chkLunes.Checked = false;
-                chkMartes.Checked = false;
-                chkMiercoles.Checked = false;
-                chkJueves.Checked = false;
-                chkViernes.Checked = false;
+                // Limpiar todos los checkboxes ante un error
+                chkLunes.Checked = chkMartes.Checked = chkMiercoles.Checked =
+                chkJueves.Checked = chkViernes.Checked = false;
             }
             else
             {
                 var partes = respuesta.Mensaje.Split(' ');
-                MessageBox.Show("Se recibió: " + respuesta.Mensaje,
-                    "INFORMACIÓN");
+                MessageBox.Show("Se recibió: " + respuesta.Mensaje, "INFORMACIÓN");
+
+                // El segundo token es el indicador de día en formato de byte con bits
                 byte resultado = Byte.Parse(partes[1]);
+
+                // Resetear todos antes de marcar el que corresponde
+                chkLunes.Checked = chkMartes.Checked = chkMiercoles.Checked =
+                chkJueves.Checked = chkViernes.Checked = false;
+
                 switch (resultado)
                 {
-                    case 0b00100000:
-                        chkLunes.Checked = true;
-                        chkMartes.Checked = false;
-                        chkMiercoles.Checked = false;
-                        chkJueves.Checked = false;
-                        chkViernes.Checked = false;
-                        break;
-                    case 0b00010000:
-                        chkMartes.Checked = true;
-                        chkLunes.Checked = false;
-                        chkMiercoles.Checked = false;
-                        chkJueves.Checked = false;
-                        chkViernes.Checked = false;
-                        break;
-                    case 0b00001000:
-                        chkMiercoles.Checked = true;
-                        chkLunes.Checked = false;
-                        chkMartes.Checked = false;
-                        chkJueves.Checked = false;
-                        chkViernes.Checked = false;
-                        break;
-                    case 0b00000100:
-                        chkJueves.Checked = true;
-                        chkLunes.Checked = false;
-                        chkMartes.Checked = false;
-                        chkMiercoles.Checked = false;
-                        chkViernes.Checked = false;
-                        break;
-                    case 0b00000010:
-                        chkViernes.Checked = true;
-                        chkLunes.Checked = false;
-                        chkMartes.Checked = false;
-                        chkMiercoles.Checked = false;
-                        chkJueves.Checked = false;
-                        break;
-                    default:
-                        chkLunes.Checked = false;
-                        chkMartes.Checked = false;
-                        chkMiercoles.Checked = false;
-                        chkJueves.Checked = false;
-                        chkViernes.Checked = false;
-                        break;
+                    case 0b00100000: chkLunes.Checked = true; break;
+                    case 0b00010000: chkMartes.Checked = true; break;
+                    case 0b00001000: chkMiercoles.Checked = true; break;
+                    case 0b00000100: chkJueves.Checked = true; break;
+                    case 0b00000010: chkViernes.Checked = true; break;
                 }
             }
         }
 
         private void btnNumConsultas_Click(object sender, EventArgs e)
         {
-            String mensaje = "hola";
-            
+            // Solicita al servidor cuántas consultas CALCULO ha hecho este cliente
             Pedido pedido = new Pedido
             {
                 Comando = "CONTADOR",
-                Parametros = new[] { mensaje }
+                Parametros = new[] { "hola" }
             };
 
-            Respuesta respuesta = HazOperacion(pedido);
+            Respuesta respuesta = Protocolo.Protocolo.HazOperacion(pedido, flujo);
             if (respuesta == null)
             {
                 MessageBox.Show("Hubo un error", "ERROR");
@@ -229,7 +154,6 @@ namespace Cliente
             if (respuesta.Estado == "NOK")
             {
                 MessageBox.Show("Error en la solicitud.", "ERROR");
-
             }
             else
             {
@@ -241,11 +165,10 @@ namespace Cliente
 
         private void FrmValidador_FormClosing(object sender, FormClosingEventArgs e)
         {
-            if (flujo != null)
-                flujo.Close();
-            if (remoto != null)
-                if (remoto.Connected)
-                    remoto.Close();
+            // Cerrar flujo y conexión al salir del formulario
+            flujo?.Close();
+            if (remoto != null && remoto.Connected)
+                remoto.Close();
         }
     }
 }
